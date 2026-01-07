@@ -1,5 +1,5 @@
 python-dotenv==1.0.0
 python-telegram-bot==21.7
-supabase-py==1.2.0 # Please ensure this version matches your development environment if different
+supabase-py
 pandas
 openpyxl
