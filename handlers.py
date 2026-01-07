@@ -17,7 +17,9 @@ import math
     ADD_CUSTOMER_PHONE,
     ADD_PRODUCT_NAME,
     ADD_PRODUCT_PRICE,
-) = range(12)
+    SELECT_COLLECTION_CUSTOMER,
+    ENTER_COLLECTION_AMOUNT,
+) = range(14)
 
 
 class Handlers:
@@ -52,6 +54,7 @@ class Handlers:
             '👥 العملاء': self.show_customer_menu,
             '📦 المنتجات': self.show_product_menu,
             '📊 التقارير': self.show_reports_soon,
+            '💵 تحصيل جديد': self.start_new_collection,
             '🔙 القائمة الرئيسية': self.show_main_menu,
             '➕ إضافة عميل جديد': self.start_add_customer,
             '📋 عرض كل العملاء': self.list_all_customers,
@@ -82,6 +85,8 @@ class Handlers:
             ADD_CUSTOMER_PHONE: self._handle_add_customer_phone,
             ADD_PRODUCT_NAME: self._handle_add_product_name,
             ADD_PRODUCT_PRICE: self._handle_add_product_price,
+            SELECT_COLLECTION_CUSTOMER: self._handle_collection_customer_search,
+            ENTER_COLLECTION_AMOUNT: self._handle_collection_amount,
         }
         handler = state_handlers.get(state)
         if handler:
@@ -114,10 +119,29 @@ class Handlers:
                 self._cleanup_state(user.id)
                 return
 
-            self.sale_data[user.id]['customer_id'] = customer_id
-            self.sale_data[user.id]['customer_name'] = customer[1]
-            await query.edit_message_text(f"👤 تم اختيار العميل: {customer[1]}")
-            await self._ask_for_product(update, context)
+            # تحقق من الحالة الحالية لتحديد ما إذا كان هذا لعملية بيع أو تحصيل
+            current_state = self.user_states.get(user.id)
+
+            if current_state == SELECT_COLLECTION_CUSTOMER:
+                # عملية تحصيل
+                debt = self.db.get_customer_debt(customer_id)
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
+                self.sale_data[user.id]['customer_id'] = customer_id
+                self.sale_data[user.id]['customer_name'] = customer_name
+                self.user_states[user.id] = ENTER_COLLECTION_AMOUNT
+
+                await query.edit_message_text(
+                    f"👤 العميل: {customer_name}\n"
+                    f"🧾 الدين الحالي: {debt:.2f} جنيه\n"
+                    f"💵 الرجاء إدخال مبلغ التحصيل:"
+                )
+            else:
+                # عملية بيع
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
+                self.sale_data[user.id]['customer_id'] = customer_id
+                self.sale_data[user.id]['customer_name'] = customer_name
+                await query.edit_message_text(f"👤 تم اختيار العميل: {customer_name}")
+                await self._ask_for_product(update, context)
 
         elif action == 'select_product':
             product_id = int(parts[1])
@@ -126,9 +150,11 @@ class Handlers:
                 await query.edit_message_text("❌ خطأ: المنتج غير موجود.")
                 return
 
-            self.sale_data[user.id]['current_item'] = {'product_id': product_id, 'product_name': product[1], 'price_per_unit': product[2]}
+            product_name = product['name'] if isinstance(product, dict) else product[1]
+            product_price = product['price'] if isinstance(product, dict) else product[2]
+            self.sale_data[user.id]['current_item'] = {'product_id': product_id, 'product_name': product_name, 'price_per_unit': product_price}
             self.user_states[user.id] = ENTER_QUANTITY
-            await query.edit_message_text(f"📦 المنتج: {product[1]}\n\nالرجاء إدخال الكمية:")
+            await query.edit_message_text(f"📦 المنتج: {product_name}\n\nالرجاء إدخال الكمية:")
 
         elif action in ['cancel_sale', 'cancel_sale_item']:
             await query.edit_message_text("❌ تم الإلغاء.")
@@ -182,8 +208,11 @@ class Handlers:
     async def _ask_for_product(self, update, context):
         user_id = update.effective_user.id
         self.user_states[user_id] = SELECT_PRODUCT
-        # Show products list directly
-        await self._list_products(update, context, search_term=None)
+        # Show products list directly by sending a new message
+        if hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.message.reply_text("📦 اختر المنتج:", reply_markup=Keyboards.create_product_keyboard(self.db.get_products()))
+        else:
+            await update.message.reply_text("📦 اختر المنتج:", reply_markup=Keyboards.create_product_keyboard(self.db.get_products()))
 
     async def _handle_product_search(self, update, context):
         query = update.message.text
@@ -193,7 +222,10 @@ class Handlers:
     async def _list_products(self, update_or_query, context, page=0, search_term=None):
         products = self.db.get_products(search_query=search_term)
         if not products:
-            await update_or_query.message.reply_text("لم يتم العثور على منتجات.", reply_markup=Keyboards.get_product_menu())
+            if isinstance(update_or_query, Update):
+                await update_or_query.message.reply_text("لم يتم العثور على منتجات.", reply_markup=Keyboards.get_product_menu())
+            else:
+                await update_or_query.callback_query.edit_message_text("لم يتم العثور على منتجات.", reply_markup=Keyboards.get_product_menu())
             return
         
         keyboard = Keyboards.create_product_keyboard(products, page=page)
@@ -326,7 +358,13 @@ class Handlers:
             return
         message = "📋 قائمة العملاء:\n\n"
         for c in customers:
-            message += f"👤 {c[1]} (الهاتف: {c[2] or 'N/A'})\n"
+            if isinstance(c, dict):
+                name = c.get('name', 'N/A')
+                phone = c.get('phone', 'N/A')
+            else:
+                name = c[1] if len(c) > 1 else 'N/A'
+                phone = c[2] if len(c) > 2 else 'N/A'
+            message += f"👤 {name} (الهاتف: {phone})\n"
         await update.message.reply_text(message)
 
     async def start_add_product(self, update, context):
@@ -366,7 +404,13 @@ class Handlers:
             return
         message = "📦 قائمة المنتجات:\n\n"
         for p in products:
-            message += f"🏷️ {p[1]} (السعر: {p[2]})\n"
+            if isinstance(p, dict):
+                name = p.get('name', 'N/A')
+                price = p.get('price', 0)
+            else:
+                name = p[1] if len(p) > 1 else 'N/A'
+                price = p[2] if len(p) > 2 else 0
+            message += f"🏷️ {name} (السعر: {price})\n"
         await update.message.reply_text(message)
 
     # --- UTILS ---
@@ -407,3 +451,88 @@ class Handlers:
             summary += f"🧾 المتبقي: {total_amount - data.get('paid_amount', 0):.2f}\n"
 
         return summary
+
+    # --- COLLECTION HANDLERS ---
+    async def start_new_collection(self, update, context):
+        """بدء عملية تحصيل جديدة"""
+        user_id = update.effective_user.id
+        self._cleanup_state(user_id)
+        self.user_states[user_id] = SELECT_COLLECTION_CUSTOMER
+        self.sale_data[user_id] = {}
+        await update.message.reply_text(
+            "💵 **تحصيل جديد**\n\n"
+            "👤 اختر العميل من القائمة:",
+            reply_markup=Keyboards.create_customer_keyboard(self.db.get_customers_with_debt())
+        )
+
+    async def _handle_collection_customer_search(self, update, context):
+        """معالجة بحث عن عميل للتحصيل"""
+        query = update.message.text
+        search_term = None if query.strip() == 'كل العملاء' else query.strip()
+        customers = self.db.get_customers_with_debt(search_query=search_term)
+
+        if not customers:
+            await update.message.reply_text(
+                "❌ لم يتم العثور على عملاء لديهم ديون.\n"
+                "يمكنك البحث عن عميل آخر أو العودة للقائمة الرئيسية.",
+                reply_markup=Keyboards.get_main_menu()
+            )
+            self._cleanup_state(update.effective_user.id)
+            return
+
+        await update.message.reply_text(
+            "👤 اختر العميل من القائمة:",
+            reply_markup=Keyboards.create_customer_keyboard(customers)
+        )
+
+    async def _handle_collection_amount(self, update, context):
+        """معالجة إدخال مبلغ التحصيل"""
+        user_id = update.effective_user.id
+        text = update.message.text
+
+        try:
+            amount = float(text)
+            if amount <= 0:
+                await update.message.reply_text("❌ المبلغ يجب أن يكون أكبر من صفر. حاول مرة أخرى.")
+                return
+
+            customer_id = self.sale_data[user_id].get('customer_id')
+            customer = self.db.get_customer_by_id(customer_id)
+            debt = self.db.get_customer_debt(customer_id)
+
+            if amount > debt:
+                await update.message.reply_text(
+                    f"⚠️ المبلغ المدخل ({amount}) أكبر من دين العميل ({debt}).\n"
+                    f"هل تريد تحصيل المبلغ الكامل ({debt})؟\n"
+                    f"أدخل 'نعم' للتحصيل الكامل أو أي نص آخر للإلغاء."
+                )
+                return
+
+            # تسجيل التحصيل
+            collection_id = self.db.add_collection({
+                'customer_id': customer_id,
+                'amount': amount,
+                'notes': 'تحصيل يدوي'
+            })
+
+            if collection_id:
+                new_debt = self.db.get_customer_debt(customer_id)
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
+                await update.message.reply_text(
+                    f"✅ تم تسجيل التحصيل بنجاح!\n\n"
+                    f"👤 العميل: {customer_name}\n"
+                    f"💵 المبلغ المحصل: {amount:.2f} جنيه\n"
+                    f"🧾 الدين المتبقي: {new_debt:.2f} جنيه\n\n"
+                    f"رقم التحصيل: #{collection_id}",
+                    reply_markup=Keyboards.get_main_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ حدث خطأ أثناء تسجيل التحصيل.",
+                    reply_markup=Keyboards.get_main_menu()
+                )
+
+            self._cleanup_state(user_id)
+
+        except ValueError:
+            await update.message.reply_text("❌ المبلغ غير صحيح. يرجى إدخال رقم صحيح.")
