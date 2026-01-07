@@ -125,20 +125,22 @@ class Handlers:
             if current_state == SELECT_COLLECTION_CUSTOMER:
                 # عملية تحصيل
                 debt = self.db.get_customer_debt(customer_id)
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
                 self.sale_data[user.id]['customer_id'] = customer_id
-                self.sale_data[user.id]['customer_name'] = customer[1]
+                self.sale_data[user.id]['customer_name'] = customer_name
                 self.user_states[user.id] = ENTER_COLLECTION_AMOUNT
 
                 await query.edit_message_text(
-                    f"👤 العميل: {customer[1]}\n"
+                    f"👤 العميل: {customer_name}\n"
                     f"🧾 الدين الحالي: {debt:.2f} جنيه\n"
                     f"💵 الرجاء إدخال مبلغ التحصيل:"
                 )
             else:
                 # عملية بيع
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
                 self.sale_data[user.id]['customer_id'] = customer_id
-                self.sale_data[user.id]['customer_name'] = customer[1]
-                await query.edit_message_text(f"👤 تم اختيار العميل: {customer[1]}")
+                self.sale_data[user.id]['customer_name'] = customer_name
+                await query.edit_message_text(f"👤 تم اختيار العميل: {customer_name}")
                 await self._ask_for_product(update, context)
 
         elif action == 'select_product':
@@ -148,9 +150,11 @@ class Handlers:
                 await query.edit_message_text("❌ خطأ: المنتج غير موجود.")
                 return
 
-            self.sale_data[user.id]['current_item'] = {'product_id': product_id, 'product_name': product[1], 'price_per_unit': product[2]}
+            product_name = product['name'] if isinstance(product, dict) else product[1]
+            product_price = product['price'] if isinstance(product, dict) else product[2]
+            self.sale_data[user.id]['current_item'] = {'product_id': product_id, 'product_name': product_name, 'price_per_unit': product_price}
             self.user_states[user.id] = ENTER_QUANTITY
-            await query.edit_message_text(f"📦 المنتج: {product[1]}\n\nالرجاء إدخال الكمية:")
+            await query.edit_message_text(f"📦 المنتج: {product_name}\n\nالرجاء إدخال الكمية:")
 
         elif action in ['cancel_sale', 'cancel_sale_item']:
             await query.edit_message_text("❌ تم الإلغاء.")
@@ -354,7 +358,13 @@ class Handlers:
             return
         message = "📋 قائمة العملاء:\n\n"
         for c in customers:
-            message += f"👤 {c[1]} (الهاتف: {c[2] or 'N/A'})\n"
+            if isinstance(c, dict):
+                name = c.get('name', 'N/A')
+                phone = c.get('phone', 'N/A')
+            else:
+                name = c[1] if len(c) > 1 else 'N/A'
+                phone = c[2] if len(c) > 2 else 'N/A'
+            message += f"👤 {name} (الهاتف: {phone})\n"
         await update.message.reply_text(message)
 
     async def start_add_product(self, update, context):
@@ -394,7 +404,13 @@ class Handlers:
             return
         message = "📦 قائمة المنتجات:\n\n"
         for p in products:
-            message += f"🏷️ {p[1]} (السعر: {p[2]})\n"
+            if isinstance(p, dict):
+                name = p.get('name', 'N/A')
+                price = p.get('price', 0)
+            else:
+                name = p[1] if len(p) > 1 else 'N/A'
+                price = p[2] if len(p) > 2 else 0
+            message += f"🏷️ {name} (السعر: {price})\n"
         await update.message.reply_text(message)
 
     # --- UTILS ---
@@ -433,6 +449,8 @@ class Handlers:
             summary += f"💳 طريقة الدفع: {data.get('payment_type', 'N/A')}\n"
             summary += f"💵 المدفوع: {data.get('paid_amount', 0):.2f}\n"
             summary += f"🧾 المتبقي: {total_amount - data.get('paid_amount', 0):.2f}\n"
+
+        return summary
 
     # --- COLLECTION HANDLERS ---
     async def start_new_collection(self, update, context):
@@ -499,9 +517,10 @@ class Handlers:
 
             if collection_id:
                 new_debt = self.db.get_customer_debt(customer_id)
+                customer_name = customer['name'] if isinstance(customer, dict) else customer[1]
                 await update.message.reply_text(
                     f"✅ تم تسجيل التحصيل بنجاح!\n\n"
-                    f"👤 العميل: {customer[1]}\n"
+                    f"👤 العميل: {customer_name}\n"
                     f"💵 المبلغ المحصل: {amount:.2f} جنيه\n"
                     f"🧾 الدين المتبقي: {new_debt:.2f} جنيه\n\n"
                     f"رقم التحصيل: #{collection_id}",

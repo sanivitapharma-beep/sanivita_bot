@@ -70,8 +70,13 @@ class Keyboards:
     @staticmethod
     def create_customer_keyboard(customers, page=0, page_size=5):
         """Creates a paginated inline keyboard for customers."""
-        # customers is a list of tuples (id, name, ...)
-        customer_list = [(c[0], c[1]) for c in customers]
+        # customers is a list of dictionaries or tuples
+        customer_list = []
+        for c in customers:
+            if isinstance(c, dict):
+                customer_list.append((c['id'], c['name']))
+            else:
+                customer_list.append((c[0], c[1]))
         return Keyboards._create_paginated_keyboard(
             items=customer_list,
             page=page,
@@ -83,8 +88,13 @@ class Keyboards:
     @staticmethod
     def create_product_keyboard(products, page=0, page_size=5):
         """Creates a paginated inline keyboard for products."""
-        # products is a list of tuples (id, name, price)
-        product_list = [(p[0], f"{p[1]} (السعر: {p[2]})") for p in products]
+        # products is a list of dictionaries or tuples
+        product_list = []
+        for p in products:
+            if isinstance(p, dict):
+                product_list.append((p['id'], f"{p['name']} (السعر: {p['price']})"))
+            else:
+                product_list.append((p[0], f"{p[1]} (السعر: {p[2]})"))
         return Keyboards._create_paginated_keyboard(
             items=product_list,
             page=page,
