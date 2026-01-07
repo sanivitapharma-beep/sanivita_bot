@@ -253,3 +253,4 @@ class Database:
         except Exception as e:
             print(f"❌ خطأ في إضافة التحصيل: {e}")
             return None
+            
